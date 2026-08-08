@@ -80,13 +80,16 @@ document.getElementById("form-coordinateur").addEventListener("submit", async (e
 
   creationEnCours = true;
   try {
+    // On crée d'abord le compte (authentification), pour que les écritures
+    // suivantes dans Firestore soient bien reconnues comme faites par un utilisateur connecté.
+    const cred = await createUserWithEmailAndPassword(auth, email, password);
+
     const coordRef = await addDoc(collection(db, "coordinations"), {
       village: coordinationEnCoursDeCreation.village,
       nom: coordinationEnCoursDeCreation.nom,
       date_creation: serverTimestamp(),
     });
 
-    const cred = await createUserWithEmailAndPassword(auth, email, password);
     const userData = {
       role: "coordinateur",
       nom, telephone, email, residence,
@@ -118,7 +121,6 @@ document.getElementById("btn-logout").addEventListener("click", async () => {
   showScreen("screen-login");
 });
 
-// --- Changement de mot de passe ---
 document.getElementById("btn-changer-mdp").addEventListener("click", () => {
   ouvrirModal(`
     <h2>Changer mon mot de passe</h2>
