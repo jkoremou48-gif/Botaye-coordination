@@ -2,7 +2,6 @@ import {
   auth, db, onAuthStateChanged, signInWithEmailAndPassword,
   createUserWithEmailAndPassword, signOut, doc, getDoc, setDoc, updateDoc,
   addDoc, collection, query, where, onSnapshot, serverTimestamp,
-  getDocs, deleteDoc,
   creerCompteSecondaire, changerMotDePasse,
 } from "./firebase-config.js";
 
@@ -13,6 +12,7 @@ const state = {
   coordinationId: null,
   coordination: null,
   associations: [],
+  reaffectations: [],
   unsubscribers: [],
 };
 let creationEnCours = false;
@@ -80,8 +80,6 @@ document.getElementById("form-coordinateur").addEventListener("submit", async (e
 
   creationEnCours = true;
   try {
-    // On crée d'abord le compte (authentification), pour que les écritures
-    // suivantes dans Firestore soient bien reconnues comme faites par un utilisateur connecté.
     const cred = await createUserWithEmailAndPassword(auth, email, password);
 
     const coordRef = await addDoc(collection(db, "coordinations"), {
@@ -187,12 +185,25 @@ async function lancerDashboard() {
       document.getElementById("stat-nb-membres").textContent = snap.size;
     }
   );
-  state.unsubscribers.push(unsubAssociations, unsubMembres);
+  const unsubReaffectations = onSnapshot(
+    query(collection(db, "reaffectations"), where("coordination_id", "==", state.coordinationId)),
+    (snap) => {
+      state.reaffectations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      render();
+    }
+  );
+  state.unsubscribers.push(unsubAssociations, unsubMembres, unsubReaffectations);
 }
 
 function render() {
   document.getElementById("stat-nb-associations").textContent = state.associations.length;
+  renderAssociations();
+  renderReaffectations();
+}
 
+// ---------- ASSOCIATIONS ----------
+
+function renderAssociations() {
   const container = document.getElementById("liste-associations");
   if (state.associations.length === 0) {
     container.innerHTML = `<p class="empty-state">Aucune association enregistrée pour l'instant. Générez un code pour inviter la première association.</p>`;
@@ -231,6 +242,157 @@ document.getElementById("btn-nouveau-code-bureau").addEventListener("click", asy
   } catch (err) {
     notifier("Erreur : " + err.message, "erreur");
   }
+});
+
+// ---------- RÉAFFECTATIONS ----------
+
+const libellesMotif = {
+  voyage: "Voyage",
+  demenagement: "Déménagement définitif",
+};
+const libellesStatut = {
+  en_attente: "En attente de traitement",
+  transmis: "Transmis à l'association d'accueil",
+  traite: "Traité",
+};
+
+function renderReaffectations() {
+  const enAttente = state.reaffectations.filter((r) => r.statut === "en_attente");
+  document.getElementById("stat-nb-reaffectations").textContent = enAttente.length;
+
+  const badge = document.getElementById("badge-reaffectations");
+  if (enAttente.length > 0) {
+    badge.textContent = enAttente.length;
+    badge.classList.remove("hidden");
+  } else {
+    badge.classList.add("hidden");
+  }
+
+  const container = document.getElementById("liste-reaffectations");
+  if (state.reaffectations.length === 0) {
+    container.innerHTML = `<p class="empty-state">Aucun dossier de réaffectation pour l'instant.</p>`;
+    return;
+  }
+
+  const tri = [...state.reaffectations].sort((a, b) => (b.date_creation?.toMillis?.() || 0) - (a.date_creation?.toMillis?.() || 0));
+  container.innerHTML = tri.map((r) => `
+    <div class="entity-card" data-reaffectation-id="${r.id}" style="cursor:pointer;">
+      <div class="entity-card-top">
+        <div>
+          <p class="entity-nom">${r.nom}</p>
+          <p class="entity-sub">${r.association_origine_nom || "—"} → ${r.ville_destination || "—"} · ${libellesMotif[r.motif] || r.motif}</p>
+        </div>
+        <span class="badge ${r.statut === "en_attente" ? "badge-erreur" : "badge-actif"}">${libellesStatut[r.statut] || r.statut}</span>
+      </div>
+    </div>
+  `).join("");
+
+  container.querySelectorAll("[data-reaffectation-id]").forEach((card) => {
+    card.addEventListener("click", () => ouvrirModalReaffectation(card.dataset.reaffectationId));
+  });
+}
+
+function ouvrirModalReaffectation(reaffectationId) {
+  const r = state.reaffectations.find((x) => x.id === reaffectationId);
+  if (!r) return;
+
+  const h = r.historique_estime || {};
+  const associationsAccueil = state.associations.filter((a) => a.id !== r.association_origine_id);
+
+  ouvrirModal(`
+    <h2>${r.nom}</h2>
+    <p class="subtitle-sm">Dossier transmis par : ${r.association_origine_nom || "—"}</p>
+
+    <div style="margin:14px 0;">
+      <div class="field-row"><label>Motif</label><p>${libellesMotif[r.motif] || r.motif}</p></div>
+      <div class="field-row"><label>Ville de destination déclarée</label><p>${r.ville_destination || "—"}</p></div>
+      <div class="field-row"><label>Date de naissance</label><p>${r.date_naissance || "—"}</p></div>
+      <div class="field-row"><label>Sexe</label><p>${r.sexe === "M" ? "Masculin" : r.sexe === "F" ? "Féminin" : "—"}</p></div>
+      <div class="field-row"><label>Situation matrimoniale</label><p>${r.situation_matrimoniale === "marie" ? "Marié(e)" : "Célibataire"}</p></div>
+      <hr style="margin:10px 0; border:none; border-top:1px solid #eee;" />
+      <div class="field-row"><label>Retard de paiement estimé (famille d'origine)</label><p>${h.taux_retard_paiement_famille_pourcent != null ? h.taux_retard_paiement_famille_pourcent + " %" : "—"}</p></div>
+      <div class="field-row"><label>Fréquentation des cas sociaux</label><p>${h.frequentation_cas_sociaux_pourcent != null ? h.frequentation_cas_sociaux_pourcent + " %" : "Non disponible (module à venir)"}</p></div>
+    </div>
+
+    <p class="subtitle-sm" style="font-weight:600;">Statut actuel : ${libellesStatut[r.statut] || r.statut}</p>
+
+    ${r.statut === "en_attente" ? `
+      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />
+      <form id="form-transmettre-reaffectation">
+        <div class="field-row">
+          <label>Association d'accueil</label>
+          <select name="association_id" required>
+            <option value="">— Choisir —</option>
+            ${associationsAccueil.map((a) => `<option value="${a.id}">${a.nom} (${a.ville || "ville inconnue"})</option>`).join("")}
+          </select>
+        </div>
+        <p class="subtitle-sm">L'association choisie recevra ce dossier avec l'historique ci-dessus pour appréciation.</p>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost-sm" id="modal-annuler" style="flex:1;">Fermer</button>
+          <button type="submit" class="btn btn-primary" style="flex:1;">Transmettre</button>
+        </div>
+      </form>
+    ` : r.statut === "transmis" ? `
+      <p class="subtitle-sm">Transmis à : ${r.association_destination_nom || "—"}</p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost-sm" id="modal-annuler" style="flex:1;">Fermer</button>
+        <button type="button" class="btn btn-primary" id="btn-marquer-traite" style="flex:1;">Marquer comme traité</button>
+      </div>
+    ` : `
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost-sm" id="modal-annuler" style="flex:1;">Fermer</button>
+      </div>
+    `}
+  `);
+
+  document.getElementById("modal-annuler").addEventListener("click", fermerModal);
+
+  const formTransmettre = document.getElementById("form-transmettre-reaffectation");
+  if (formTransmettre) {
+    formTransmettre.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const associationId = fd.get("association_id");
+      const association = state.associations.find((a) => a.id === associationId);
+      try {
+        await updateDoc(doc(db, "reaffectations", reaffectationId), {
+          statut: "transmis",
+          association_destination_id: associationId,
+          association_destination_nom: association ? association.nom : "",
+          date_transmission: serverTimestamp(),
+        });
+        notifier("Dossier transmis à l'association d'accueil.", "succes");
+        fermerModal();
+      } catch (err) {
+        notifier("Erreur : " + err.message, "erreur");
+      }
+    });
+  }
+
+  const btnTraite = document.getElementById("btn-marquer-traite");
+  if (btnTraite) {
+    btnTraite.addEventListener("click", async () => {
+      try {
+        await updateDoc(doc(db, "reaffectations", reaffectationId), {
+          statut: "traite",
+          date_traitement: serverTimestamp(),
+        });
+        notifier("Dossier marqué comme traité.", "succes");
+        fermerModal();
+      } catch (err) {
+        notifier("Erreur : " + err.message, "erreur");
+      }
+    });
+  }
+}
+
+document.querySelectorAll(".tab-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll(".tab-panel").forEach((p) => p.classList.add("hidden"));
+    btn.classList.add("active");
+    document.getElementById(`tab-${btn.dataset.tab}`).classList.remove("hidden");
+  });
 });
 
 function ouvrirModal(html) {
