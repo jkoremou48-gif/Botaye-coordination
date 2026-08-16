@@ -2,10 +2,11 @@ import {
   auth, db, onAuthStateChanged, signInWithEmailAndPassword,
   createUserWithEmailAndPassword, signOut, doc, getDoc, setDoc, updateDoc,
   addDoc, collection, query, where, onSnapshot, serverTimestamp,
-  creerCompteSecondaire, changerMotDePasse,
+  creerCompteSecondaire, changerMotDePasse, supprimerCompteCourant,
 } from "./firebase-config.js";
 
 import { genererCode, formatDate, notifier } from "./utils.js";
+import { reinitialiserToutesLesDonnees } from "./reinitialisation.js";
 
 const state = {
   currentUser: null,
@@ -385,6 +386,85 @@ function ouvrirModalReaffectation(reaffectationId) {
     });
   }
 }
+
+// ---------- RÉINITIALISATION TOTALE ----------
+
+document.getElementById("lien-reinitialisation").addEventListener("click", () => {
+  ouvrirModal(`
+    <h2 style="color:#a94442;">Réinitialisation totale</h2>
+    <p class="subtitle-sm">Cette action supprime <strong>toutes</strong> les données des 3 applications BÖTAYE (coordinations, associations, membres, familles, cotisations, cas sociaux, réaffectations) de façon <strong>irréversible</strong>. Les comptes de connexion existants deviendront inutilisables.</p>
+    <p class="subtitle-sm">Connectez-vous avec un compte existant pour autoriser l'opération.</p>
+    <form id="form-reinitialisation">
+      <div class="field-row">
+        <label>E-mail d'un compte existant (coordinateur ou bureau)</label>
+        <input type="email" name="email" required />
+      </div>
+      <div class="field-row">
+        <label>Mot de passe</label>
+        <input type="password" name="password" required />
+      </div>
+      <div class="field-row">
+        <label>Tapez SUPPRIMER pour confirmer</label>
+        <input type="text" name="confirmation" required placeholder="SUPPRIMER" />
+      </div>
+      <p id="reinitError" style="color:#c0392b; font-size:13px;"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost-sm" id="modal-annuler" style="flex:1;">Annuler</button>
+        <button type="submit" class="btn btn-primary" style="flex:1; background:#a94442;">Tout réinitialiser</button>
+      </div>
+    </form>
+  `);
+  document.getElementById("modal-annuler").addEventListener("click", fermerModal);
+  document.getElementById("form-reinitialisation").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const errEl = document.getElementById("reinitError");
+    errEl.textContent = "";
+    const fd = new FormData(e.target);
+    const email = fd.get("email").trim();
+    const password = fd.get("password");
+    const confirmation = fd.get("confirmation").trim();
+
+    if (confirmation !== "SUPPRIMER") {
+      errEl.textContent = "Veuillez taper exactement SUPPRIMER pour confirmer.";
+      return;
+    }
+
+    creationEnCours = true; // empêche onAuthStateChanged de réagir pendant l'opération
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (err) {
+      errEl.textContent = "Identifiants incorrects.";
+      creationEnCours = false;
+      return;
+    }
+
+    document.getElementById("modal-content").innerHTML = `
+      <h2>Réinitialisation en cours…</h2>
+      <p class="subtitle-sm" id="reinit-progression">Démarrage…</p>
+    `;
+
+    try {
+      await reinitialiserToutesLesDonnees((nomCollection, nb) => {
+        const p = document.getElementById("reinit-progression");
+        if (p) p.textContent = `Collection "${nomCollection}" vidée (${nb} document(s)).`;
+      });
+
+      try { await supprimerCompteCourant(); } catch (e2) { /* le compte est peut-être déjà orphelin, on ignore */ }
+
+      state.unsubscribers.forEach((u) => u());
+      state.unsubscribers = [];
+      try { await signOut(auth); } catch (e3) { /* ignore */ }
+
+      creationEnCours = false;
+      fermerModal();
+      notifier("Application réinitialisée. Vous pouvez créer une nouvelle coordination.", "succes");
+      showScreen("screen-onboarding-coordination");
+    } catch (err) {
+      creationEnCours = false;
+      notifier("Erreur pendant la réinitialisation : " + err.message, "erreur");
+    }
+  });
+});
 
 document.querySelectorAll(".tab-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
