@@ -8,6 +8,7 @@ import {
   EmailAuthProvider,
   reauthenticateWithCredential,
   updatePassword,
+  deleteUser,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getFirestore,
@@ -60,6 +61,14 @@ async function changerMotDePasse(email, ancienMotDePasse, nouveauMotDePasse) {
   await updatePassword(auth.currentUser, nouveauMotDePasse);
 }
 
+// Supprime le compte d'authentification actuellement connecté.
+// Utilisé uniquement par la réinitialisation totale de l'application.
+async function supprimerCompteCourant() {
+  if (auth.currentUser) {
+    await deleteUser(auth.currentUser);
+  }
+}
+
 export {
   auth,
   db,
@@ -82,4 +91,5 @@ export {
   deleteDoc,
   creerCompteSecondaire,
   changerMotDePasse,
+  supprimerCompteCourant,
 };
