@@ -5,7 +5,8 @@ import {
   creerCompteSecondaire, changerMotDePasse, supprimerCompteCourant,
 } from "./firebase-config.js";
 
-import { genererCode, formatDate, notifier } from "./utils.js";
+import { genererCode, formatDate, formatMontant, notifier } from "./utils.js";
+import { calculerAge } from "./bareme.js";
 import { reinitialiserToutesLesDonnees } from "./reinitialisation.js";
 
 const state = {
@@ -28,21 +29,6 @@ let coordinationEnCoursDeCreation = null;
 const screens = ["screen-loading", "screen-login", "screen-onboarding-coordination", "screen-onboarding-coordinateur", "screen-dashboard"];
 function showScreen(id) {
   screens.forEach((s) => document.getElementById(s).classList.toggle("hidden", s !== id));
-}
-
-function calculerAge(dateNaissance) {
-  if (!dateNaissance) return null;
-  const naissance = new Date(dateNaissance);
-  if (isNaN(naissance.getTime())) return null;
-  const auj = new Date();
-  let age = auj.getFullYear() - naissance.getFullYear();
-  const m = auj.getMonth() - naissance.getMonth();
-  if (m < 0 || (m === 0 && auj.getDate() < naissance.getDate())) age--;
-  return age;
-}
-
-function formatMontant(montant) {
-  return new Intl.NumberFormat("fr-FR").format(Math.round(montant || 0)) + " GNF";
 }
 
 function demarrer() {
@@ -654,9 +640,9 @@ function ouvrirModalReaffectation(reaffectationId) {
       </form>
     ` : r.statut === "transmis" ? `
       <p class="subtitle-sm">Transmis à : ${r.association_destination_nom || "—"}</p>
+      <p class="subtitle-sm">En attente d'intégration effective par l'association d'accueil (rattachement à une famille existante ou création d'une nouvelle famille). Le statut passera automatiquement à "Traité" une fois cette intégration effectuée côté Bureau.</p>
       <div class="modal-actions">
         <button type="button" class="btn btn-ghost-sm" id="modal-annuler" style="flex:1;">Fermer</button>
-        <button type="button" class="btn btn-primary" id="btn-marquer-traite" style="flex:1;">Marquer comme traité</button>
       </div>
     ` : `
       <div class="modal-actions">
@@ -682,22 +668,6 @@ function ouvrirModalReaffectation(reaffectationId) {
           date_transmission: serverTimestamp(),
         });
         notifier("Dossier transmis à l'association d'accueil.", "succes");
-        fermerModal();
-      } catch (err) {
-        notifier("Erreur : " + err.message, "erreur");
-      }
-    });
-  }
-
-  const btnTraite = document.getElementById("btn-marquer-traite");
-  if (btnTraite) {
-    btnTraite.addEventListener("click", async () => {
-      try {
-        await updateDoc(doc(db, "reaffectations", reaffectationId), {
-          statut: "traite",
-          date_traitement: serverTimestamp(),
-        });
-        notifier("Dossier marqué comme traité.", "succes");
         fermerModal();
       } catch (err) {
         notifier("Erreur : " + err.message, "erreur");
