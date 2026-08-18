@@ -27,6 +27,14 @@
     user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
     touch-action: manipulation; display: block; margin: 24px auto 0;
   }
+  .tabs { overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; }
+  .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid #eee; border-radius: 10px; }
+  table.tableau-ressortissants { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 13px; }
+  table.tableau-ressortissants th, table.tableau-ressortissants td {
+    padding: 8px 10px; border-bottom: 1px solid #eee; text-align: left; white-space: nowrap;
+  }
+  table.tableau-ressortissants th { background: #f7f5ef; font-weight: 600; color: #1B4332; }
+  table.tableau-ressortissants tr.ligne-groupe td { background: #eef0e8; font-weight: 600; color: #1B4332; }
 </style>
 </head>
 <body>
@@ -120,6 +128,9 @@
     <nav class="tabs">
       <button class="tab-btn active" data-tab="apercu">Aperçu</button>
       <button class="tab-btn" data-tab="associations">Associations</button>
+      <button class="tab-btn" data-tab="ressortissants">Ressortissants</button>
+      <button class="tab-btn" data-tab="tableau">Tableau</button>
+      <button class="tab-btn" data-tab="communication">Communication</button>
       <button class="tab-btn" data-tab="reaffectations">Réaffectations <span id="badge-reaffectations" class="badge badge-actif hidden"></span></button>
     </nav>
 
@@ -145,8 +156,47 @@
         <h2>Associations de la coordination</h2>
         <button id="btn-nouveau-code-bureau" class="btn btn-secondary btn-sm">+ Générer un code association</button>
       </div>
-      <p class="subtitle-sm">Chaque association locale inscrite avec un code de cette coordination apparaît ici.</p>
+      <p class="subtitle-sm">Chaque association locale inscrite avec un code de cette coordination apparaît ici. Touchez une association pour voir sa situation complète.</p>
       <div id="liste-associations" class="entity-list"></div>
+    </div>
+
+    <div id="tab-ressortissants" class="tab-panel hidden">
+      <div class="list-header">
+        <h2>Ressortissants</h2>
+      </div>
+      <p class="subtitle-sm">Chefs de famille et personnes à leur charge, regroupés par association.</p>
+      <div id="liste-ressortissants" class="entity-list"></div>
+    </div>
+
+    <div id="tab-tableau" class="tab-panel hidden">
+      <div class="list-header">
+        <h2>Tableau général</h2>
+      </div>
+      <p class="subtitle-sm">Vue d'ensemble de tous les ressortissants, classés par association.</p>
+      <div id="tableau-container" class="table-scroll"></div>
+    </div>
+
+    <div id="tab-communication" class="tab-panel hidden">
+      <div class="list-header">
+        <h2>Communication</h2>
+      </div>
+      <p class="subtitle-sm">Partagez une opinion, une recommandation ou une consigne avec une association, ou avec toutes.</p>
+      <form id="form-communication">
+        <div class="field-row">
+          <label>Destinataire</label>
+          <select name="association_id" id="select-destinataire-communication">
+            <option value="">Toutes les associations</option>
+          </select>
+        </div>
+        <div class="field-row">
+          <label>Message</label>
+          <textarea name="message" rows="4" required placeholder="Votre opinion ou recommandation..."></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">Envoyer</button>
+      </form>
+      <hr style="margin:20px 0; border:none; border-top:1px solid #eee;" />
+      <h3 style="font-size:14px; margin-bottom:10px;">Messages envoyés</h3>
+      <div id="liste-communications" class="entity-list"></div>
     </div>
 
     <div id="tab-reaffectations" class="tab-panel hidden">
@@ -181,10 +231,22 @@
           }
         } catch (e) { /* ignore */ }
         var diag = document.createElement('div');
+        diag.id = 'diag-urgence-banner';
         diag.style.cssText = "position:fixed;bottom:12px;left:12px;right:12px;background:#a94442;color:white;padding:10px 14px;border-radius:8px;font-size:12px;font-family:sans-serif;z-index:9999;text-align:center;";
         diag.textContent = "Le chargement a échoué. Cache technique vidé — appuyez ici pour recharger.";
         diag.addEventListener('click', function () { location.reload(true); });
         document.body.appendChild(diag);
+
+        // Si l'app finit par charger correctement malgré tout (réseau lent),
+        // on retire le bandeau au lieu de le laisser affiché indéfiniment.
+        var verif = setInterval(function () {
+          var l = document.getElementById('screen-loading');
+          if (l && l.classList.contains('hidden')) {
+            var d = document.getElementById('diag-urgence-banner');
+            if (d) d.remove();
+            clearInterval(verif);
+          }
+        }, 1000);
       }
     }, 6000);
   });
