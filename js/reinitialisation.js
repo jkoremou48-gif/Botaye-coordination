@@ -13,6 +13,7 @@ const COLLECTIONS_A_VIDER = [
   "contribution_rules",
   "reaffectations",
   "social_cases",
+  "communications",
 ];
 
 // Supprime tous les documents de toutes les collections BÖTAYE.
