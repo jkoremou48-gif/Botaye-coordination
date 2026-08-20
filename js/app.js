@@ -5,8 +5,7 @@ import {
   creerCompteSecondaire, changerMotDePasse, supprimerCompteCourant,
 } from "./firebase-config.js";
 
-import { genererCode, formatDate, formatMontant, notifier } from "./utils.js";
-import { calculerAge } from "./bareme.js";
+import { genererCode, formatDate, notifier } from "./utils.js";
 import { reinitialiserToutesLesDonnees } from "./reinitialisation.js";
 
 const state = {
@@ -29,6 +28,21 @@ let coordinationEnCoursDeCreation = null;
 const screens = ["screen-loading", "screen-login", "screen-onboarding-coordination", "screen-onboarding-coordinateur", "screen-dashboard"];
 function showScreen(id) {
   screens.forEach((s) => document.getElementById(s).classList.toggle("hidden", s !== id));
+}
+
+function calculerAge(dateNaissance) {
+  if (!dateNaissance) return null;
+  const naissance = new Date(dateNaissance);
+  if (isNaN(naissance.getTime())) return null;
+  const auj = new Date();
+  let age = auj.getFullYear() - naissance.getFullYear();
+  const m = auj.getMonth() - naissance.getMonth();
+  if (m < 0 || (m === 0 && auj.getDate() < naissance.getDate())) age--;
+  return age;
+}
+
+function formatMontant(montant) {
+  return new Intl.NumberFormat("fr-FR").format(Math.round(montant || 0)) + " GNF";
 }
 
 function demarrer() {
