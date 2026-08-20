@@ -20,6 +20,7 @@ const state = {
   allCotisations: [],
   allSocialCases: [],
   communications: [],
+  recommandations: [],
   unsubscribers: [],
 };
 let creationEnCours = false;
@@ -226,7 +227,14 @@ async function lancerDashboard() {
       renderCommunications();
     }
   );
-  state.unsubscribers.push(unsubAssociations, unsubMembres, unsubReaffectations, unsubCommunications);
+  const unsubRecommandations = onSnapshot(
+    query(collection(db, "recommandations"), where("coordination_id", "==", state.coordinationId)),
+    (snap) => {
+      state.recommandations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      renderRecommandations();
+    }
+  );
+  state.unsubscribers.push(unsubAssociations, unsubMembres, unsubReaffectations, unsubCommunications, unsubRecommandations);
 }
 
 function render() {
@@ -562,6 +570,181 @@ function renderCommunications() {
       </div>
     </div>
   `).join("");
+}
+
+// ---------- RECOMMANDATIONS (fil Coordination → Président → Bureau → Chefs de famille) ----------
+
+const libellesStatutReco = {
+  discussion_coordination: "En discussion avec le président",
+  discussion_bureau: "Transmise au bureau",
+  publiee_membres: "Diffusée aux chefs de famille",
+  cloturee: "Clôturée",
+};
+
+function formaterDateMessage(ms) {
+  return new Date(ms).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function renderRecommandations() {
+  const container = document.getElementById("liste-recommandations");
+  if (!container) return;
+  if (state.recommandations.length === 0) {
+    container.innerHTML = `<p class="empty-state">Aucune recommandation envoyée pour l'instant.</p>`;
+    return;
+  }
+  const tri = [...state.recommandations].sort((a, b) => (b.date_maj?.toMillis?.() || 0) - (a.date_maj?.toMillis?.() || 0));
+  container.innerHTML = tri.map((r) => `
+    <div class="entity-card" data-reco-id="${r.id}" style="cursor:pointer;">
+      <div class="entity-card-top">
+        <div>
+          <p class="entity-nom">${r.titre}</p>
+          <p class="entity-sub">${r.association_nom || "—"}</p>
+        </div>
+        <span class="badge ${r.statut === "discussion_coordination" ? "badge-erreur" : "badge-actif"}">${libellesStatutReco[r.statut] || r.statut}</span>
+      </div>
+    </div>
+  `).join("");
+  container.querySelectorAll("[data-reco-id]").forEach((card) => {
+    card.addEventListener("click", () => ouvrirModalRecommandation(card.dataset.recoId));
+  });
+}
+
+document.getElementById("btn-nouvelle-recommandation").addEventListener("click", () => {
+  if (state.associations.length === 0) {
+    notifier("Aucune association enregistrée pour l'instant.", "erreur");
+    return;
+  }
+  ouvrirModal(`
+    <h2>Nouvelle recommandation</h2>
+    <p class="subtitle-sm">Cette recommandation sera d'abord discutée avec le président de l'association choisie.</p>
+    <form id="form-nouvelle-recommandation">
+      <div class="field-row">
+        <label>Association destinataire</label>
+        <select name="association_id" required>
+          ${state.associations.map((a) => `<option value="${a.id}">${a.nom}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field-row">
+        <label>Titre</label>
+        <input type="text" name="titre" required placeholder="Ex : Révision du calendrier des cotisations" />
+      </div>
+      <div class="field-row">
+        <label>Message initial</label>
+        <textarea name="message" rows="4" required></textarea>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost-sm" id="modal-annuler" style="flex:1;">Annuler</button>
+        <button type="submit" class="btn btn-primary" style="flex:1;">Envoyer</button>
+      </div>
+    </form>
+  `);
+  document.getElementById("modal-annuler").addEventListener("click", fermerModal);
+  document.getElementById("form-nouvelle-recommandation").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const associationId = fd.get("association_id");
+    const association = state.associations.find((a) => a.id === associationId);
+    try {
+      await addDoc(collection(db, "recommandations"), {
+        coordination_id: state.coordinationId,
+        association_id: associationId,
+        association_nom: association ? association.nom : "",
+        titre: fd.get("titre").trim(),
+        statut: "discussion_coordination",
+        messages: [{
+          phase: "coordination",
+          auteur_id: state.currentUser.uid,
+          auteur_nom: state.currentUser.nom,
+          auteur_role: "coordinateur",
+          texte: fd.get("message").trim(),
+          date: Date.now(),
+        }],
+        recommandation_finale_bureau: null,
+        recommandation_finale_membres: null,
+        date_creation: serverTimestamp(),
+        date_maj: serverTimestamp(),
+      });
+      notifier("Recommandation envoyée au président.", "succes");
+      fermerModal();
+    } catch (err) {
+      notifier("Erreur : " + err.message, "erreur");
+    }
+  });
+});
+
+function ouvrirModalRecommandation(recoId) {
+  const r = state.recommandations.find((x) => x.id === recoId);
+  if (!r) return;
+
+  const messagesCoordination = (r.messages || []).filter((m) => m.phase === "coordination");
+
+  let blocSuivant = "";
+  if (r.statut === "discussion_coordination") {
+    blocSuivant = `
+      <form id="form-reponse-reco">
+        <div class="field-row">
+          <label>Votre message</label>
+          <textarea name="texte" rows="3" required></textarea>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost-sm" id="modal-annuler" style="flex:1;">Fermer</button>
+          <button type="submit" class="btn btn-primary" style="flex:1;">Envoyer</button>
+        </div>
+      </form>
+    `;
+  } else {
+    blocSuivant = `
+      <hr style="margin:14px 0; border:none; border-top:1px solid #eee;" />
+      ${r.recommandation_finale_bureau ? `<div class="field-row"><label>Version transmise au bureau par le président</label><p>${r.recommandation_finale_bureau}</p></div>` : ""}
+      ${r.recommandation_finale_membres ? `<div class="field-row"><label>Version diffusée aux chefs de famille</label><p>${r.recommandation_finale_membres}</p></div>` : ""}
+      <p class="subtitle-sm">Statut : ${libellesStatutReco[r.statut] || r.statut}</p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-primary" id="modal-annuler" style="flex:1;">Fermer</button>
+      </div>
+    `;
+  }
+
+  ouvrirModal(`
+    <h2>${r.titre}</h2>
+    <p class="subtitle-sm">${r.association_nom || "—"} · ${libellesStatutReco[r.statut] || r.statut}</p>
+    <div style="margin:14px 0; max-height:260px; overflow-y:auto;">
+      ${messagesCoordination.map((m) => `
+        <div class="entity-card" style="margin-bottom:8px;">
+          <p class="entity-sub" style="margin-bottom:4px;">${m.auteur_role === "coordinateur" ? "Vous (coordination)" : "Président"} · ${formaterDateMessage(m.date)}</p>
+          <p>${m.texte}</p>
+        </div>
+      `).join("")}
+    </div>
+    ${blocSuivant}
+  `);
+
+  document.getElementById("modal-annuler").addEventListener("click", fermerModal);
+
+  const formReponse = document.getElementById("form-reponse-reco");
+  if (formReponse) {
+    formReponse.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      try {
+        const recoRef = doc(db, "recommandations", recoId);
+        const snap = await getDoc(recoRef);
+        const messages = snap.data().messages || [];
+        messages.push({
+          phase: "coordination",
+          auteur_id: state.currentUser.uid,
+          auteur_nom: state.currentUser.nom,
+          auteur_role: "coordinateur",
+          texte: fd.get("texte").trim(),
+          date: Date.now(),
+        });
+        await updateDoc(recoRef, { messages, date_maj: serverTimestamp() });
+        notifier("Message envoyé.", "succes");
+        fermerModal();
+      } catch (err) {
+        notifier("Erreur : " + err.message, "erreur");
+      }
+    });
+  }
 }
 
 // ---------- RÉAFFECTATIONS ----------
