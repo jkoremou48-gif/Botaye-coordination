@@ -19,6 +19,9 @@ const state = {
   allFamilyMembers: [],
   allCotisations: [],
   allSocialCases: [],
+  allMeetings: [],
+  allDecisions: [],
+  allExpenses: [],
   communications: [],
   recommandations: [],
   unsubscribers: [],
@@ -240,6 +243,10 @@ async function lancerDashboard() {
 function render() {
   document.getElementById("stat-nb-associations").textContent = state.associations.length;
   document.getElementById("stat-nb-membres").textContent = state.membres.length;
+  const statDecisions = document.getElementById("stat-nb-decisions-publiees");
+  if (statDecisions) statDecisions.textContent = state.allDecisions.filter((d) => d.statut === "publiee").length;
+  const statReunions = document.getElementById("stat-nb-reunions-tenues");
+  if (statReunions) statReunions.textContent = state.allMeetings.filter((m) => ["tenue", "cloturee"].includes(m.statut)).length;
   renderAssociations();
   renderReaffectations();
   renderRessortissants();
@@ -249,7 +256,10 @@ function render() {
 // ---------- DONNÉES TRANSVERSES (toutes les associations de la coordination) ----------
 
 let crossUnsubscribers = [];
-const chunkData = { families: {}, familyMembers: {}, cotisations: {}, socialCases: {} };
+const chunkData = {
+  families: {}, familyMembers: {}, cotisations: {}, socialCases: {},
+  meetings: {}, decisions: {}, expenses: {},
+};
 
 function chunkArray(arr, size) {
   const chunks = [];
@@ -264,6 +274,9 @@ function reabonnerDonneesTransverses() {
   chunkData.familyMembers = {};
   chunkData.cotisations = {};
   chunkData.socialCases = {};
+  chunkData.meetings = {};
+  chunkData.decisions = {};
+  chunkData.expenses = {};
 
   const ids = state.associations.map((a) => a.id);
   if (ids.length === 0) {
@@ -271,6 +284,9 @@ function reabonnerDonneesTransverses() {
     state.allFamilyMembers = [];
     state.allCotisations = [];
     state.allSocialCases = [];
+    state.allMeetings = [];
+    state.allDecisions = [];
+    state.allExpenses = [];
     render();
     return;
   }
@@ -297,7 +313,22 @@ function reabonnerDonneesTransverses() {
       state.allSocialCases = Object.values(chunkData.socialCases).flat();
       render();
     });
-    crossUnsubscribers.push(uf, ufm, uc, usc);
+    const um = onSnapshot(query(collection(db, "meetings"), where("association_id", "in", chunk)), (snap) => {
+      chunkData.meetings[idx] = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      state.allMeetings = Object.values(chunkData.meetings).flat();
+      render();
+    });
+    const ud = onSnapshot(query(collection(db, "decisions"), where("association_id", "in", chunk)), (snap) => {
+      chunkData.decisions[idx] = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      state.allDecisions = Object.values(chunkData.decisions).flat();
+      render();
+    });
+    const ue = onSnapshot(query(collection(db, "expenses"), where("association_id", "in", chunk)), (snap) => {
+      chunkData.expenses[idx] = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      state.allExpenses = Object.values(chunkData.expenses).flat();
+      render();
+    });
+    crossUnsubscribers.push(uf, ufm, uc, usc, um, ud, ue);
   });
 }
 
@@ -345,6 +376,26 @@ function renderAssociations() {
   });
 }
 
+const libellesStatutReunionCoord = {
+  preparation: "En préparation",
+  convoquee: "Convoquée",
+  tenue: "Tenue",
+  cloturee: "Clôturée",
+};
+const libellesStatutDecisionCoord = {
+  brouillon: "Brouillon",
+  soumise: "Soumise",
+  validee: "Validée",
+  publiee: "Publiée",
+};
+const libellesStatutDepenseCoord = {
+  soumise: "Soumise",
+  controlee: "Contrôlée",
+  validee: "Validée",
+  executee: "Exécutée",
+  cloturee: "Clôturée",
+};
+
 function ouvrirModalSituationAssociation(associationId) {
   const a = state.associations.find((x) => x.id === associationId);
   if (!a) return;
@@ -352,17 +403,30 @@ function ouvrirModalSituationAssociation(associationId) {
   const familles = state.allFamilies.filter((f) => f.association_id === associationId);
   const cotisations = state.allCotisations.filter((c) => c.association_id === associationId);
   const casSociaux = state.allSocialCases.filter((c) => c.association_id === associationId);
+  const reunions = state.allMeetings.filter((m) => m.association_id === associationId);
+  const decisionsPubliees = state.allDecisions.filter((d) => d.association_id === associationId && d.statut === "publiee");
+  const depenses = state.allExpenses.filter((d) => d.association_id === associationId);
 
   const totalCotise = cotisations.reduce((s, c) => s + Number(c.montant || 0), 0);
   const totalAssistances = casSociaux.reduce((s, c) => s + Number(c.montant_accorde || 0), 0);
   const casEnCours = casSociaux.filter((c) => !["cloture", "rejete"].includes(c.statut)).length;
   const casClotures = casSociaux.filter((c) => c.statut === "cloture").length;
 
+  const reunionsTenues = reunions.filter((r) => ["tenue", "cloturee"].includes(r.statut)).length;
+  const reunionsAVenir = reunions.filter((r) => ["preparation", "convoquee"].includes(r.statut)).length;
+
+  const totalDepensesExecutees = depenses
+    .filter((d) => ["executee", "cloturee"].includes(d.statut))
+    .reduce((s, d) => s + Number(d.montant || 0), 0);
+  const depensesEnAttente = depenses.filter((d) => !["executee", "cloturee"].includes(d.statut)).length;
+
   let totalPersonnes = 0;
   familles.forEach((f) => {
     if (f.chef_membre_id) totalPersonnes++;
     totalPersonnes += dependantsActifsGlobal(f.id).length;
   });
+
+  const decisionsTriees = [...decisionsPubliees].sort((a2, b2) => (b2.date_publication?.toMillis?.() || 0) - (a2.date_publication?.toMillis?.() || 0));
 
   ouvrirModal(`
     <h2>${a.nom}</h2>
@@ -371,12 +435,29 @@ function ouvrirModalSituationAssociation(associationId) {
     <h3 style="font-size:14px; margin-bottom:8px;">Situation financière</h3>
     <div class="field-row"><label>Total cotisé (toutes périodes)</label><p>${formatMontant(totalCotise)}</p></div>
     <div class="field-row"><label>Total assistances sociales accordées</label><p>${formatMontant(totalAssistances)}</p></div>
+    <div class="field-row"><label>Total dépenses exécutées</label><p>${formatMontant(totalDepensesExecutees)}</p></div>
+    <div class="field-row"><label>Dépenses en cours de traitement</label><p>${depensesEnAttente}</p></div>
     <hr style="margin:14px 0; border:none; border-top:1px solid #eee;" />
     <h3 style="font-size:14px; margin-bottom:8px;">Situation sociale</h3>
     <div class="field-row"><label>Familles enregistrées</label><p>${familles.length}</p></div>
     <div class="field-row"><label>Ressortissants enregistrés</label><p>${totalPersonnes}</p></div>
     <div class="field-row"><label>Cas sociaux en cours</label><p>${casEnCours}</p></div>
     <div class="field-row"><label>Cas sociaux clôturés</label><p>${casClotures}</p></div>
+    <hr style="margin:14px 0; border:none; border-top:1px solid #eee;" />
+    <h3 style="font-size:14px; margin-bottom:8px;">Réunions</h3>
+    <div class="field-row"><label>Réunions tenues</label><p>${reunionsTenues}</p></div>
+    <div class="field-row"><label>Réunions à venir</label><p>${reunionsAVenir}</p></div>
+    <hr style="margin:14px 0; border:none; border-top:1px solid #eee;" />
+    <h3 style="font-size:14px; margin-bottom:8px;">Décisions publiées</h3>
+    ${decisionsTriees.length === 0
+      ? `<p class="empty-state">Aucune décision publiée pour l'instant.</p>`
+      : decisionsTriees.slice(0, 10).map((d) => `
+        <div class="entity-card" style="margin-bottom:6px;">
+          <p class="entity-nom">${d.titre} <span style="font-weight:400; color:#777;">(${d.numero || ""})</span></p>
+          <p class="entity-sub">${formatDate(d.date_publication)}</p>
+        </div>
+      `).join("")}
+    <p class="subtitle-sm" style="margin-top:8px;">Les dossiers disciplinaires restent confidentiels au bureau de chaque association et ne sont pas visibles depuis la coordination.</p>
     <div class="modal-actions">
       <button type="button" class="btn btn-primary" id="modal-annuler" style="flex:1;">Fermer</button>
     </div>
